@@ -4,7 +4,11 @@ const cors = require("cors");
 const WebSocket = require("ws");
 const mongoose = require("mongoose");
 
-const uri = "mongodb+srv://ravi:7OWFqQtQpXLzWCE5@cluster0.mkeur.mongodb.net/order_notifications?retryWrites=true&w=majority";
+// ===============================
+// 🔗 MongoDB Connection
+// ===============================
+const uri =
+  "mongodb+srv://ravi:7OWFqQtQpXLzWCE5@cluster0.mkeur.mongodb.net/order_notifications?retryWrites=true&w=majority";
 
 async function connectDB() {
   try {
@@ -12,11 +16,15 @@ async function connectDB() {
     console.log("✅ MongoDB connected successfully");
   } catch (err) {
     console.error("❌ MongoDB connection error:", err.message);
+    process.exit(1);
   }
 }
 
 connectDB();
 
+// ===============================
+// 📦 Mongoose Model
+// ===============================
 const Notification = mongoose.model(
   "Notification",
   new mongoose.Schema({
@@ -27,39 +35,68 @@ const Notification = mongoose.model(
   })
 );
 
+// ===============================
+// ⚙️ Express Setup
+// ===============================
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const wss = new WebSocket.Server({ port: 6001 });
-console.log("✅ WebSocket running on ws://localhost:6001");
+// ===============================
+// 🌐 HTTP + WebSocket on Same Port
+// ===============================
+const PORT = 6002;
+const server = app.listen(PORT, () =>
+  console.log(`🌐 HTTP & WS server running on http://localhost:${PORT}`)
+);
 
+const wss = new WebSocket.Server({ server });
+console.log(`✅ WebSocket initialized on ws://localhost:${PORT}`);
+
+// ===============================
+// 🔊 Broadcast Helper
+// ===============================
 function broadcast(data) {
+  const message = JSON.stringify(data);
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
+      client.send(message);
     }
   });
 }
 
+// ===============================
+// 📬 Routes
+// ===============================
+
+// Create + Broadcast new event
 app.post("/send", async (req, res) => {
-  const { event, data } = req.body;
+  try {
+    const { event, data } = req.body;
 
-  if (event === "order_created") {
-    await Notification.create({
-      order_id: data.id,
-      user_name: data.user,
-      total: data.total,
-    });
+    if (!event || !data) {
+      return res.status(400).json({ success: false, message: "Invalid body" });
+    }
+
+    if (event === "order_created") {
+      await Notification.create({
+        order_id: data.id,
+        user_name: data.user,
+        total: data.total,
+      });
+    }
+
+    broadcast({ event, data });
+    console.log("📢 Broadcasted:", event, data);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Error in /send:", err);
+    res.status(500).json({ error: "Server error" });
   }
-
-  broadcast({ event, data });
-  console.log("📢 Broadcasted:", event, data);
-
-  res.json({ success: true });
 });
 
-
+// Fetch all notifications
 app.get("/notifications", async (req, res) => {
   try {
     const list = await Notification.find().sort({ created_at: -1 });
@@ -70,8 +107,7 @@ app.get("/notifications", async (req, res) => {
   }
 });
 
-
-// 🗑️ Single delete
+// Delete single notification
 app.delete("/notifications/:id", async (req, res) => {
   try {
     const id = req.params.id;
@@ -84,19 +120,20 @@ app.delete("/notifications/:id", async (req, res) => {
     console.log(`🗑️ Deleted notification ID: ${id}`);
     res.json({ success: true, message: "Notification deleted" });
   } catch (err) {
-    console.error("❌ Error deleting:", err);
+    console.error("❌ Error deleting notification:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-
-// 🧹 Multi delete (delete many by IDs)
+// Delete multiple notifications
 app.post("/notifications/delete-multiple", async (req, res) => {
   try {
-    const { ids } = req.body; // expects array of Mongo _id values
+    const { ids } = req.body;
 
     if (!ids || !Array.isArray(ids)) {
-      return res.status(400).json({ success: false, message: "IDs array required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "IDs array required" });
     }
 
     const result = await Notification.deleteMany({ _id: { $in: ids } });
@@ -112,9 +149,3 @@ app.post("/notifications/delete-multiple", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
-
-app.listen(6002, () =>
-  console.log("🌐 HTTP API listening on http://localhost:6002")
-);
